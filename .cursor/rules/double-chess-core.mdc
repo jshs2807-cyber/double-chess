@@ -1,0 +1,41 @@
+---
+description: Core rules and implementation standards for Double Chess
+alwaysApply: true
+---
+
+# Double Chess Project Rule
+
+## Vision
+- Build a fast, tactical chess variant that minimizes opening memorization.
+- Optimize for real-time strategic play and clear player feedback.
+
+## Tech Constraints
+- Use only Vanilla HTML, CSS, and JavaScript.
+- Do not use external frontend frameworks (React, Vue, etc.).
+- Do not use chess libraries (such as chess.js).
+- Keep game logic and UI/DOM manipulation strictly separated.
+
+## Variant Rules (Must Enforce)
+- Use standard chess movement and support en passant, castling, and promotion.
+- Allow up to two moves per turn (same piece twice or different pieces).
+- If Move 1 gives check, end the turn immediately (no Move 2).
+- If a player starts in check, Move 1 must resolve check; Move 2 is only allowed after successful resolution.
+- Never allow king movement through or onto attacked squares in either move.
+
+## UI Requirements
+- Flip the board 180 degrees with CSS transition after a full turn ends.
+- Counter-rotate piece glyphs so they remain upright.
+- Add subtle selection/move visual feedback (highlight, scale, etc.).
+- Show dual timers (fast-play style) and keep them synchronized with turn state.
+- Clearly display active player and whether the turn is on Move 1 or Move 2.
+- Ensure responsive playability on both desktop and mobile.
+
+## Security and Validation
+- Validate all moves using internal JavaScript game state only.
+- Never trust DOM state or raw user input as game truth.
+- Keep state shape deterministic and server-verifiable for future anti-cheat backend checks.
+
+## AI Coding Standards
+- Never leave placeholder logic (for example, "implement later").
+- Implement complete, functional code for requested features.
+- For highly complex rule logic, add brief comments explaining decision flow.

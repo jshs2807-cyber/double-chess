@@ -1,0 +1,12 @@
+# Dependencies / build output (optional future use)
+node_modules/
+dist/
+
+# Deploy tool caches
+.vercel/
+.netlify/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
