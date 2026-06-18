@@ -6,63 +6,14 @@
 const TIMER_SECONDS = 5 * 60;
 const MATCHMAKING_DELAY_MS = 3000;
 
-const PIECE_UNICODE = {
-  w: { k: "♔", q: "♕", r: "♖", b: "♗", n: "♘", p: "♙" },
-  b: { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" },
-};
+/** UI-only RhosGFX piece assets (CC0). Game logic still uses piece.type. */
+const PIECE_ASSET_TYPES = { k: "K", q: "Q", r: "R", b: "B", n: "N", p: "P" };
 
-/** UI-only SVG silhouettes (King→Pawn). Game logic still uses piece.type — not Unicode. */
-const PIECE_SVG_SHAPES = {
-  k: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="16" ry="3.5"/>
-    <path class="piece-shade" d="M18 52h28l-3-7H21z"/>
-    <path class="piece-body" d="M21 45h22l-3-8H24z"/>
-    <path class="piece-hi" d="M25 37h14l-2-9H27z"/>
-    <path class="piece-body" d="M28 28h8v-6h-8z"/>
-    <path class="piece-stroke" d="M32 10v8M28 14h8" fill="none" stroke-width="2.4" stroke-linecap="round"/>
-  `,
-  q: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="16" ry="3.5"/>
-    <path class="piece-shade" d="M18 52h28l-3-7H21z"/>
-    <path class="piece-body" d="M21 45h22l-3-8H24z"/>
-    <path class="piece-hi" d="M24 37h16l-1-6H25z"/>
-    <circle class="piece-body" cx="32" cy="24" r="5"/>
-    <circle class="piece-hi" cx="22" cy="18" r="2.2"/><circle class="piece-hi" cx="32" cy="15" r="2.2"/><circle class="piece-hi" cx="42" cy="18" r="2.2"/>
-    <path class="piece-stroke" d="M22 18v4M32 15v5M42 18v4" fill="none" stroke-width="1.6" stroke-linecap="round"/>
-  `,
-  b: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="15" ry="3.5"/>
-    <path class="piece-shade" d="M19 52h26l-3-7H22z"/>
-    <path class="piece-body" d="M22 45h20l-3-8H25z"/>
-    <path class="piece-hi" d="M27 37h10c4 0 7-3 7-7s-3-7-7-7c-4 0-7 3-7 7s3 7 7 7z"/>
-    <path class="piece-shade" d="M30 30l6-8" fill="none" stroke-width="2.2" stroke-linecap="round"/>
-    <path class="piece-stroke" d="M32 12v5M29 14h6" fill="none" stroke-width="2" stroke-linecap="round"/>
-  `,
-  n: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="15" ry="3.5"/>
-    <path class="piece-shade" d="M19 52h26l-3-7H22z"/>
-    <path class="piece-body" d="M22 45h20l-2-7H24z"/>
-    <path class="piece-hi" d="M40 38c2-8-2-16-10-19-6-2-12 0-16 5 3-1 7-1 10 1-5 2-8 7-8 13h24z"/>
-    <path class="piece-shade" d="M26 32c2-3 5-5 9-5"/>
-    <circle class="piece-stroke" cx="34" cy="26" r="1.2" fill="#1a1410" stroke="none"/>
-    <path class="piece-body" d="M42 36c3 2 4 5 3 8" fill="none" stroke-width="2" stroke-linecap="round"/>
-  `,
-  r: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="15" ry="3.5"/>
-    <path class="piece-shade" d="M18 52h28l-3-7H21z"/>
-    <path class="piece-body" d="M22 45h20v-9H22z"/>
-    <path class="piece-hi" d="M24 36h16v-4H24z"/>
-    <path class="piece-body" d="M26 22h12v6H26z"/>
-    <path class="piece-shade" d="M26 22h3v3h-3zM31 22h3v3h-3zM36 22h3v3h-3z"/>
-  `,
-  p: `
-    <ellipse class="piece-shadow" cx="32" cy="56" rx="12" ry="3"/>
-    <path class="piece-shade" d="M22 52h20l-2-6H24z"/>
-    <path class="piece-body" d="M26 46h12l-1-5H27z"/>
-    <circle class="piece-hi" cx="32" cy="34" r="7"/>
-    <path class="piece-body" d="M29 41h6v5h-6z"/>
-  `,
-};
+function getPieceAssetSrc(color, type) {
+  const prefix = color === "w" ? "w" : "b";
+  const code = PIECE_ASSET_TYPES[type] || "P";
+  return `assets/pieces/rhosgfx/${prefix}${code}.svg`;
+}
 
 const SCREENS = [
   "home",
@@ -1201,8 +1152,12 @@ const UI = {
         if (piece) {
           const span = document.createElement("span");
           span.className = `piece piece--${piece.color === "w" ? "white" : "black"}`;
-          /* UI only: illustrated SVG glyphs; board state / validation unchanged */
-          span.innerHTML = `<svg class="piece-svg" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><g class="piece-glyph">${PIECE_SVG_SHAPES[piece.type] || ""}</g></svg>`;
+          const img = document.createElement("img");
+          img.className = "piece-img";
+          img.src = getPieceAssetSrc(piece.color, piece.type);
+          img.alt = "";
+          img.setAttribute("aria-hidden", "true");
+          span.appendChild(img);
 
           if (
             state.lastMovedSquare &&
