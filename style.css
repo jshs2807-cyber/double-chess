@@ -11,11 +11,16 @@
   --accent-bright: #9bc363;
   --accent-dim: #5a7a38;
   --danger: #e05858;
-  --square-light: #eeeed2;
-  --square-dark: #769656;
-  --square-light-flip: #eeeed2;
-  --square-dark-flip: #769656;
-  --highlight: rgba(127, 166, 80, 0.45);
+  /* Classic board palette (reference image) */
+  --square-light: #c3aa7e;
+  --square-dark: #1d1814;
+  --board-border: #4a3821;
+  --coord-color: #c3aa7e;
+  --coord-size: clamp(13px, 3.2vw, 20px);
+  --piece-white: #f0e6d3;
+  --piece-black: #2a221c;
+  --highlight: rgba(195, 170, 126, 0.42);
+  --highlight-ring: rgba(195, 170, 126, 0.88);
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
@@ -466,24 +471,93 @@ button:disabled {
 
 .board-wrapper {
   width: var(--board-size);
+  filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.55));
+}
+
+/* Frame rotates as one unit; coords + pieces counter-rotate (UI only) */
+.board-frame {
+  display: grid;
+  grid-template-columns: var(--coord-size) minmax(0, 1fr) var(--coord-size);
+  grid-template-rows: var(--coord-size) minmax(0, 1fr) var(--coord-size);
+  width: 100%;
   aspect-ratio: 1;
-  border-radius: 4px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
+  background: var(--board-border);
+  padding: 5px;
+  border-radius: 5px;
+  transform: rotate(0deg);
+  transition: transform var(--transition-board);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.board-frame--flipped {
+  transform: rotate(180deg);
+}
+
+.board-coords {
+  display: grid;
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-coords--files {
+  grid-template-columns: repeat(8, 1fr);
+  align-items: center;
+}
+
+.board-coords--files-top {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.board-coords--files-bottom {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.board-coords--ranks {
+  grid-template-rows: repeat(8, 1fr);
+  align-items: center;
+}
+
+.board-coords--ranks-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.board-coords--ranks-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.coord {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(0.58rem, 2.2vw, 0.72rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--coord-color);
+  font-variant-numeric: tabular-nums;
+  transition: transform var(--transition-board);
+}
+
+.board-frame--flipped .coord {
+  transform: rotate(180deg);
 }
 
 .board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   grid-template-rows: repeat(8, 1fr);
+  grid-column: 2;
+  grid-row: 2;
   width: 100%;
   height: 100%;
-  transform: rotate(0deg);
-  transition: transform var(--transition-board);
-}
-
-.board--flipped {
-  transform: rotate(180deg);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
 .square {
@@ -504,7 +578,7 @@ button:disabled {
 }
 
 .square--selected {
-  box-shadow: inset 0 0 0 3px var(--highlight);
+  box-shadow: inset 0 0 0 3px var(--highlight-ring);
 }
 
 .square--selected::after {
@@ -518,32 +592,33 @@ button:disabled {
 .square--legal::after {
   content: "";
   position: absolute;
-  width: 28%;
-  height: 28%;
+  width: 26%;
+  height: 26%;
   border-radius: 50%;
-  background: rgba(20, 30, 20, 0.35);
+  background: rgba(195, 170, 126, 0.38);
+  box-shadow: 0 0 0 1px rgba(29, 24, 20, 0.2);
   pointer-events: none;
 }
 
 .square--capture {
-  box-shadow: inset 0 0 0 4px rgba(127, 166, 80, 0.75);
+  box-shadow: inset 0 0 0 3px var(--highlight-ring);
 }
 
 .square--capture::after {
   content: "";
   position: absolute;
-  inset: 8%;
+  inset: 10%;
   border-radius: 50%;
-  border: 3px solid rgba(127, 166, 80, 0.65);
-  background: transparent;
+  border: 2px solid rgba(195, 170, 126, 0.75);
+  background: rgba(29, 24, 20, 0.12);
   pointer-events: none;
 }
 
 .square--in-check {
   background: radial-gradient(
     circle,
-    rgba(224, 88, 88, 0.55) 0%,
-    transparent 70%
+    rgba(200, 72, 72, 0.5) 0%,
+    transparent 72%
   ) !important;
 }
 
@@ -554,7 +629,7 @@ button:disabled {
   pointer-events: none;
 }
 
-.board--flipped .piece {
+.board-frame--flipped .piece {
   transform: rotate(180deg);
 }
 
@@ -574,7 +649,7 @@ button:disabled {
   }
 }
 
-.board--flipped .piece--just-moved {
+.board-frame--flipped .piece--just-moved {
   animation: piecePulseFlipped 0.55s ease;
 }
 
@@ -591,13 +666,19 @@ button:disabled {
 }
 
 .piece--white {
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 1px #000;
+  color: var(--piece-white);
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.28),
+    0 2px 4px rgba(0, 0, 0, 0.55),
+    0 0 1px rgba(0, 0, 0, 0.75);
 }
 
 .piece--black {
-  color: #111;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.15);
+  color: var(--piece-black);
+  text-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.65),
+    0 2px 5px rgba(0, 0, 0, 0.4);
 }
 
 /* Overlay */

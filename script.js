@@ -897,6 +897,7 @@ const UI = {
     this.elements = {
       screens: {},
       board: document.getElementById("board"),
+      boardFrame: document.getElementById("board-frame"),
       turnIndicator: document.getElementById("turn-indicator"),
       timerWhite: document.getElementById("timer-white"),
       timerBlack: document.getElementById("timer-black"),
@@ -1049,7 +1050,12 @@ const UI = {
       this.elements.disconnectOverlay.hidden = !state.opponentDisconnected;
     }
 
-    this.elements.board.classList.toggle("board--flipped", state.boardFlipped);
+    /* UI only: rotate frame (border + coords + grid); game logic / #board structure unchanged */
+    this.elements.boardFrame.classList.toggle(
+      "board-frame--flipped",
+      state.boardFlipped
+    );
+
     this.elements.gameLayout.classList.toggle(
       "game-layout--flipped",
       state.boardFlipped

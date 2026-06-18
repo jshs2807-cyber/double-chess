@@ -123,7 +123,26 @@
           <p id="turn-indicator" class="turn-indicator">White · Move 1</p>
           <p id="online-wait-hint" class="online-wait-hint" hidden>Waiting for opponent's move…</p>
           <div id="board-wrapper" class="board-wrapper">
-            <div id="board" class="board" role="grid" aria-label="Chessboard"></div>
+            <!-- Visual wrapper only — #board 8×8 grid + data-row/col unchanged for game logic -->
+            <div id="board-frame" class="board-frame">
+              <div class="board-coords board-coords--files board-coords--files-top" aria-hidden="true">
+                <span class="coord">a</span><span class="coord">b</span><span class="coord">c</span><span class="coord">d</span>
+                <span class="coord">e</span><span class="coord">f</span><span class="coord">g</span><span class="coord">h</span>
+              </div>
+              <div class="board-coords board-coords--files board-coords--files-bottom" aria-hidden="true">
+                <span class="coord">a</span><span class="coord">b</span><span class="coord">c</span><span class="coord">d</span>
+                <span class="coord">e</span><span class="coord">f</span><span class="coord">g</span><span class="coord">h</span>
+              </div>
+              <div class="board-coords board-coords--ranks board-coords--ranks-left" aria-hidden="true">
+                <span class="coord">8</span><span class="coord">7</span><span class="coord">6</span><span class="coord">5</span>
+                <span class="coord">4</span><span class="coord">3</span><span class="coord">2</span><span class="coord">1</span>
+              </div>
+              <div class="board-coords board-coords--ranks board-coords--ranks-right" aria-hidden="true">
+                <span class="coord">8</span><span class="coord">7</span><span class="coord">6</span><span class="coord">5</span>
+                <span class="coord">4</span><span class="coord">3</span><span class="coord">2</span><span class="coord">1</span>
+              </div>
+              <div id="board" class="board" role="grid" aria-label="Chessboard"></div>
+            </div>
           </div>
         </div>
 
