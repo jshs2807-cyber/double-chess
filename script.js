@@ -192,6 +192,56 @@ const ChessEngine = {
     return state.movePhase === 2;
   },
 
+  /** Active player may capture en passant on the current position (phase rules included). */
+  canCaptureEnPassantNow(state) {
+    if (!state.enPassant || state.gameOver) return false;
+    if (this.enPassantCaptureColor(state.enPassant) !== state.activePlayer) return false;
+    if (state.chessMode === "double" && state.movePhase !== 2) return false;
+    return true;
+  },
+
+  /** True if EP is pending for active player but must wait until Move 2 (Double Chess). */
+  enPassantDeferredToMove2(state) {
+    return (
+      state.chessMode === "double" &&
+      state.movePhase === 1 &&
+      Boolean(state.enPassant) &&
+      this.enPassantCaptureColor(state.enPassant) === state.activePlayer
+    );
+  },
+
+  resolveEnPassantAfterMove(state, move, next) {
+    if (move.doublePawn) {
+      next.enPassant = {
+        ...this.enPassantTarget(move.from.row, move.to.row, move.from.col),
+        captureColor: OPPONENT[move.piece.color],
+      };
+      return;
+    }
+
+    if (move.enPassant) {
+      next.enPassant = null;
+      return;
+    }
+
+    if (!state.enPassant) {
+      next.enPassant = null;
+      return;
+    }
+
+    const capturerTurn =
+      this.enPassantCaptureColor(state.enPassant) === move.piece.color;
+    const preserveDoubleMove1 =
+      next.chessMode === "double" &&
+      state.movePhase === 1 &&
+      capturerTurn;
+    const preserveCreatorTurn = !capturerTurn;
+
+    if (!preserveDoubleMove1 && !preserveCreatorTurn) {
+      next.enPassant = null;
+    }
+  },
+
   canCastle(state, color, side) {
     const rights = state.castling[color];
     if (side === "K" && !rights.kingside) return false;
@@ -436,28 +486,7 @@ const ChessEngine = {
       if (to.row === row && to.col === 7) next.castling[move.captured.color].kingside = false;
     }
 
-    if (move.doublePawn) {
-      next.enPassant = {
-        ...this.enPassantTarget(from.row, to.row, from.col),
-        captureColor: OPPONENT[color],
-      };
-    } else if (move.enPassant) {
-      next.enPassant = null;
-    } else if (state.enPassant) {
-      const capturerTurn =
-        this.enPassantCaptureColor(state.enPassant) === color;
-      const preserveDoubleMove1 =
-        next.chessMode === "double" &&
-        state.movePhase === 1 &&
-        capturerTurn;
-      const preserveCreatorTurn = !capturerTurn;
-
-      if (!preserveDoubleMove1 && !preserveCreatorTurn) {
-        next.enPassant = null;
-      }
-    } else {
-      next.enPassant = null;
-    }
+    this.resolveEnPassantAfterMove(state, move, next);
 
     return next;
   },
@@ -635,6 +664,10 @@ function createAppState() {
   };
 }
 
+function squareName(row, col) {
+  return `${"abcdefgh"[col]}${8 - row}`;
+}
+
 function canPlayerAct(state) {
   if (state.gameOver || state.opponentDisconnected) return false;
   if (!state.isOnline) return true;
@@ -673,6 +706,7 @@ function mergeGameFromFirebase(state, game) {
     movePhase: game.movePhase,
     turnStartedInCheck: game.turnStartedInCheck,
     boardFlipped: game.boardFlipped,
+    chessMode: game.chessMode ?? state.chessMode,
     timers: { ...game.timers },
     timerRunning: game.timerRunning,
     gameOver: game.gameOver,
@@ -770,6 +804,14 @@ const GameLogic = {
       state.activePlayer !== ChessEngine.enPassantCaptureColor(state.enPassant)
     ) {
       enPassant = state.enPassant;
+    } else if (
+      state.enPassant &&
+      state.chessMode === "double" &&
+      state.activePlayer === ChessEngine.enPassantCaptureColor(state.enPassant)
+    ) {
+      enPassant = null;
+    } else if (state.enPassant && state.chessMode === "standard") {
+      enPassant = null;
     }
     const next = {
       ...state,
@@ -833,12 +875,15 @@ const GameLogic = {
     if (!match) return state;
 
     const pseudo = ChessEngine.generatePseudoMoves(state, fromRow, fromCol);
-    const fullMove = pseudo.find(
+    const candidates = pseudo.filter(
       (m) =>
         m.to.row === toRow &&
         m.to.col === toCol &&
         legal.some((l) => l.to.row === m.to.row && l.to.col === m.to.col)
     );
+    const fullMove =
+      candidates.find((m) => m.enPassant) ||
+      candidates.find((m) => ChessEngine.isMoveLegal(state, m, state.activePlayer));
     if (!fullMove || !ChessEngine.isMoveLegal(state, fullMove, state.activePlayer)) {
       return state;
     }
@@ -1075,6 +1120,12 @@ const UI = {
     if (state.chessMode === "double" && !state.gameOver) {
       phaseLabel = ` · Move ${state.movePhase}`;
     }
+    let epLabel = "";
+    if (ChessEngine.enPassantDeferredToMove2(state)) {
+      epLabel = ` · En passant ${squareName(state.enPassant.row, state.enPassant.col)} on Move 2`;
+    } else if (ChessEngine.canCaptureEnPassantNow(state)) {
+      epLabel = ` · En passant ${squareName(state.enPassant.row, state.enPassant.col)} available`;
+    }
     const checkLabel = inCheck && !state.gameOver ? " · Check!" : "";
 
     const roleLabel =
@@ -1084,7 +1135,7 @@ const UI = {
 
     this.elements.turnIndicator.textContent = state.gameOver
       ? "Game Over"
-      : `${playerName}${phaseLabel}${checkLabel}${roleLabel}`;
+      : `${playerName}${phaseLabel}${epLabel}${checkLabel}${roleLabel}`;
 
     if (this.elements.onlineRoomBadge) {
       if (state.isOnline && state.roomCode) {
@@ -1123,6 +1174,8 @@ const UI = {
       !prevState ||
       prevState.board !== state.board ||
       prevState.boardFlipped !== state.boardFlipped ||
+      prevState.movePhase !== state.movePhase ||
+      JSON.stringify(prevState.enPassant) !== JSON.stringify(state.enPassant) ||
       !this.selectionEqual(prevState.selectedSquare, state.selectedSquare) ||
       !this.legalMovesEqual(prevState.legalMoves, state.legalMoves) ||
       !this.selectionEqual(prevState.lastMovedSquare, state.lastMovedSquare);
@@ -1743,6 +1796,7 @@ const App = {
       prev.board !== next.board ||
       prev.activePlayer !== next.activePlayer ||
       prev.movePhase !== next.movePhase ||
+      JSON.stringify(prev.enPassant) !== JSON.stringify(next.enPassant) ||
       prev.boardFlipped !== next.boardFlipped ||
       prev.timers.w !== next.timers.w ||
       prev.timers.b !== next.timers.b ||
