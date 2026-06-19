@@ -175,6 +175,23 @@ const ChessEngine = {
     return true;
   },
 
+  /** FEN en-passant target: the square the double-advancing pawn passed over. */
+  enPassantTarget(fromRow, toRow, fromCol) {
+    return { row: (fromRow + toRow) / 2, col: fromCol };
+  },
+
+  enPassantCaptureColor(ep) {
+    if (ep.captureColor) return ep.captureColor;
+    return ep.row === 2 ? "w" : "b";
+  },
+
+  /** Double Chess: en passant may only be played as Move 2 of the turn. */
+  canPlayEnPassant(state, move) {
+    if (!move.enPassant) return true;
+    if (state.chessMode !== "double") return true;
+    return state.movePhase === 2;
+  },
+
   canCastle(state, color, side) {
     const rights = state.castling[color];
     if (side === "K" && !rights.kingside) return false;
@@ -263,9 +280,15 @@ const ChessEngine = {
 
       if (state.enPassant) {
         const ep = state.enPassant;
-        const destRow = fromRow + forward;
-        if (destRow === ep.row && Math.abs(fromCol - ep.col) === 1) {
-          const victim = board[ep.row][ep.col];
+        const epRank = color === "w" ? 3 : 4;
+        const victimRow = ep.row - forward;
+        if (
+          fromRow === epRank &&
+          fromRow + forward === ep.row &&
+          Math.abs(fromCol - ep.col) === 1 &&
+          this.inBounds(victimRow, ep.col)
+        ) {
+          const victim = board[victimRow][ep.col];
           if (victim && victim.type === "p" && victim.color !== color) {
             moves.push({
               from: { row: fromRow, col: fromCol },
@@ -275,7 +298,7 @@ const ChessEngine = {
               promotion: null,
               castle: null,
               enPassant: true,
-              enPassantCapture: { row: ep.row, col: ep.col },
+              enPassantCapture: { row: victimRow, col: ep.col },
             });
           }
         }
@@ -413,9 +436,27 @@ const ChessEngine = {
       if (to.row === row && to.col === 7) next.castling[move.captured.color].kingside = false;
     }
 
-    next.enPassant = null;
     if (move.doublePawn) {
-      next.enPassant = { row: to.row, col: from.col };
+      next.enPassant = {
+        ...this.enPassantTarget(from.row, to.row, from.col),
+        captureColor: OPPONENT[color],
+      };
+    } else if (move.enPassant) {
+      next.enPassant = null;
+    } else if (state.enPassant) {
+      const capturerTurn =
+        this.enPassantCaptureColor(state.enPassant) === color;
+      const preserveDoubleMove1 =
+        next.chessMode === "double" &&
+        state.movePhase === 1 &&
+        capturerTurn;
+      const preserveCreatorTurn = !capturerTurn;
+
+      if (!preserveDoubleMove1 && !preserveCreatorTurn) {
+        next.enPassant = null;
+      }
+    } else {
+      next.enPassant = null;
     }
 
     return next;
@@ -436,6 +477,8 @@ const ChessEngine = {
    * @param {string} playerColor - side making the move (defaults to state.activePlayer)
    */
   isMoveLegal(state, move, playerColor = state.activePlayer) {
+    if (!this.canPlayEnPassant(state, move)) return false;
+
     const board = state.board;
     const piece = board[move.from.row][move.from.col];
     if (!piece || piece.color !== playerColor) return false;
@@ -718,10 +761,21 @@ const GameLogic = {
 
   completeTurn(state, lastMove) {
     const nextPlayer = OPPONENT[state.activePlayer];
+    let enPassant = null;
+    if (lastMove?.doublePawn) {
+      enPassant = state.enPassant;
+    } else if (
+      state.enPassant &&
+      state.chessMode === "double" &&
+      state.activePlayer !== ChessEngine.enPassantCaptureColor(state.enPassant)
+    ) {
+      enPassant = state.enPassant;
+    }
     const next = {
       ...state,
       activePlayer: nextPlayer,
       movePhase: 1,
+      enPassant,
       boardFlipped: nextPlayer === "b",
       selectedSquare: null,
       legalMoves: [],
