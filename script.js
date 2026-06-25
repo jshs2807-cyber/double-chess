@@ -185,31 +185,33 @@ const ChessEngine = {
     return ep.row === 2 ? "w" : "b";
   },
 
-  /** Double Chess: en passant may only be played as Move 2 of the turn. */
+  /**
+   * Double Chess: the capturing side may only play en passant on Move 1 of its turn.
+   * In standard chess it is always allowed on the (single) move that follows.
+   */
   canPlayEnPassant(state, move) {
     if (!move.enPassant) return true;
     if (state.chessMode !== "double") return true;
-    return state.movePhase === 2;
+    return state.movePhase === 1;
   },
 
-  /** Active player may capture en passant on the current position (phase rules included). */
+  /** Active player can legally capture en passant in the current position right now. */
   canCaptureEnPassantNow(state) {
     if (!state.enPassant || state.gameOver) return false;
     if (this.enPassantCaptureColor(state.enPassant) !== state.activePlayer) return false;
-    if (state.chessMode === "double" && state.movePhase !== 2) return false;
+    if (state.chessMode === "double" && state.movePhase !== 1) return false;
     return true;
   },
 
-  /** True if EP is pending for active player but must wait until Move 2 (Double Chess). */
-  enPassantDeferredToMove2(state) {
-    return (
-      state.chessMode === "double" &&
-      state.movePhase === 1 &&
-      Boolean(state.enPassant) &&
-      this.enPassantCaptureColor(state.enPassant) === state.activePlayer
-    );
-  },
-
+  /**
+   * Recompute the en passant target after a move is applied.
+   *  - A pawn that advances two squares in one move creates a fresh target for the opponent.
+   *  - An en passant capture consumes the target.
+   *  - A target the mover could have captured but didn't expires immediately (Double Chess
+   *    rule 4: after the capturing side's Move 1 the right is gone).
+   *  - A target the mover just created earlier this turn (Move 1 double push) is preserved
+   *    through the rest of the mover's turn (rule 2).
+   */
   resolveEnPassantAfterMove(state, move, next) {
     if (move.doublePawn) {
       next.enPassant = {
@@ -219,27 +221,20 @@ const ChessEngine = {
       return;
     }
 
-    if (move.enPassant) {
+    if (move.enPassant || !state.enPassant) {
       next.enPassant = null;
       return;
     }
 
-    if (!state.enPassant) {
-      next.enPassant = null;
-      return;
-    }
-
-    const capturerTurn =
+    const moverIsCapturer =
       this.enPassantCaptureColor(state.enPassant) === move.piece.color;
-    const preserveDoubleMove1 =
-      next.chessMode === "double" &&
-      state.movePhase === 1 &&
-      capturerTurn;
-    const preserveCreatorTurn = !capturerTurn;
 
-    if (!preserveDoubleMove1 && !preserveCreatorTurn) {
+    if (moverIsCapturer) {
+      // Mover held the capture right but chose another move — right is lost at once.
       next.enPassant = null;
     }
+    // Otherwise the target belongs to the opponent (mover created it this turn): keep it
+    // (next.enPassant is already a clone of state.enPassant via cloneState).
   },
 
   canCastle(state, color, side) {
@@ -795,29 +790,13 @@ const GameLogic = {
 
   completeTurn(state, lastMove) {
     const nextPlayer = OPPONENT[state.activePlayer];
-    let enPassant = null;
-    if (lastMove?.doublePawn) {
-      enPassant = state.enPassant;
-    } else if (
-      state.enPassant &&
-      state.chessMode === "double" &&
-      state.activePlayer !== ChessEngine.enPassantCaptureColor(state.enPassant)
-    ) {
-      enPassant = state.enPassant;
-    } else if (
-      state.enPassant &&
-      state.chessMode === "double" &&
-      state.activePlayer === ChessEngine.enPassantCaptureColor(state.enPassant)
-    ) {
-      enPassant = null;
-    } else if (state.enPassant && state.chessMode === "standard") {
-      enPassant = null;
-    }
+    // The target was already resolved by applyMove: a pawn that just advanced two squares
+    // leaves a target for nextPlayer (their Move 1); anything else has already been cleared.
     const next = {
       ...state,
       activePlayer: nextPlayer,
       movePhase: 1,
-      enPassant,
+      enPassant: state.enPassant,
       boardFlipped: nextPlayer === "b",
       selectedSquare: null,
       legalMoves: [],
@@ -1121,9 +1100,7 @@ const UI = {
       phaseLabel = ` · Move ${state.movePhase}`;
     }
     let epLabel = "";
-    if (ChessEngine.enPassantDeferredToMove2(state)) {
-      epLabel = ` · En passant ${squareName(state.enPassant.row, state.enPassant.col)} on Move 2`;
-    } else if (ChessEngine.canCaptureEnPassantNow(state)) {
+    if (ChessEngine.canCaptureEnPassantNow(state)) {
       epLabel = ` · En passant ${squareName(state.enPassant.row, state.enPassant.col)} available`;
     }
     const checkLabel = inCheck && !state.gameOver ? " · Check!" : "";
