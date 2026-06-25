@@ -156,7 +156,14 @@ const ChessEngine = {
     return this.isSquareAttacked(state.board, king.row, king.col, OPPONENT[color]);
   },
 
-  /** King cannot move through or onto attacked squares */
+  /**
+   * Castling-only safety: the king may not start in, pass through, or land on an
+   * attacked square. This walks every square from the king's origin to the destination.
+   * NOTE: This must NOT be used for ordinary king moves — because it inspects the king's
+   * CURRENT square, a king that is in check would always fail here, which previously made
+   * legal escapes (including capturing the checking piece) look impossible. Ordinary king
+   * moves are validated by the make-move simulation in isMoveLegal instead.
+   */
   isKingPathSafe(board, fromRow, fromCol, toRow, toCol, color) {
     const dr = Math.sign(toRow - fromRow);
     const dc = Math.sign(toCol - fromCol);
@@ -510,7 +517,10 @@ const ChessEngine = {
     const pseudo = this.generatePseudoMoves(state, move.from.row, move.from.col);
     if (!pseudo.some((m) => this.movesMatch(m, move))) return false;
 
-    if (piece.type === "k") {
+    // Path-safety only applies to castling (king sliding across multiple squares). For a
+    // normal king move/capture we rely solely on the simulated board below: applyMove removes
+    // the captured piece, so a king that captures its checker is correctly seen as safe.
+    if (piece.type === "k" && move.castle) {
       if (
         !this.isKingPathSafe(
           board,
@@ -525,6 +535,8 @@ const ChessEngine = {
       }
     }
 
+    // Make-move simulation on a cloned board: the captured piece is gone from this board,
+    // so its attacks no longer count when re-checking the moving side's king.
     const simulated = this.applyMove(state, move);
     return !this.isInCheck(simulated, playerColor);
   },
