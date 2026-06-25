@@ -547,48 +547,46 @@ const ChessEngine = {
     return moves;
   },
 
-  /** Immutable apply — never mutates the incoming state or its board */
-  applyMove(state, move) {
-    const next = this.cloneState(state);
-    const board = next.board;
+  /**
+   * Apply a move onto a cloned board array only (no state metadata).
+   * Order is strict so captured pieces never linger as ghost attackers:
+   *   1) remove en-passant victim (if any)
+   *   2) clear destination (capture / remove the checking piece)
+   *   3) clear origin
+   *   4) place the mover on destination  ← king's new coordinates for safety checks
+   *   5) slide the rook (castling only)
+   * Standard/double/freestyle piece moves all share this path; freestyle castling is
+   * the only special board branch and is kept separate from canCastle/isKingPathSafe.
+   */
+  applyMoveToBoard(board, move, chessMode, castlingRooks) {
     const { from, to, piece } = move;
     const color = piece.color;
 
-    // --- Freestyle (Chess960) castling: dedicated, overlap-safe placement. ---
-    // The king/rook start files are arbitrary and may already overlap the destination
-    // squares (e.g. king already on g1, or rook on the king's target). We therefore lift
-    // BOTH pieces first, then drop them onto their fixed destinations, which is correct for
-    // every layout including the "zero-square" cases. Standard/double never enter this branch.
-    if (move.castle && state.chessMode === "freestyle") {
+    if (move.castle && chessMode === "freestyle") {
       const row = color === "w" ? 7 : 0;
       const rookCol =
-        move.castle === "K"
-          ? state.castlingRooks[color].kingside
-          : state.castlingRooks[color].queenside;
+        move.castle === "K" ? castlingRooks[color].kingside : castlingRooks[color].queenside;
       const { kingDestCol, rookDestCol } = this.castleDestCols(move.castle);
-
       const kingPiece = board[from.row][from.col];
       const rookPiece = board[row][rookCol];
       board[from.row][from.col] = null;
       board[row][rookCol] = null;
       board[row][kingDestCol] = kingPiece;
       board[row][rookDestCol] = rookPiece;
-
-      next.castling[color].kingside = false;
-      next.castling[color].queenside = false;
-      next.enPassant = null; // castling never creates or preserves an en passant target
-      return next;
+      return;
     }
-
-    board[to.row][to.col] = move.promotion
-      ? { color, type: move.promotion }
-      : { ...piece };
-    board[from.row][from.col] = null;
 
     if (move.enPassant && move.enPassantCapture) {
-      const cap = move.enPassantCapture;
-      board[cap.row][cap.col] = null;
+      board[move.enPassantCapture.row][move.enPassantCapture.col] = null;
     }
+
+    const placed = move.promotion
+      ? { color, type: move.promotion }
+      : { ...piece };
+
+    board[to.row][to.col] = null;
+    board[from.row][from.col] = null;
+    board[to.row][to.col] = placed;
 
     if (move.castle === "K") {
       const row = color === "w" ? 7 : 0;
@@ -598,6 +596,43 @@ const ChessEngine = {
       const row = color === "w" ? 7 : 0;
       board[row][3] = board[row][0];
       board[row][0] = null;
+    }
+  },
+
+  /**
+   * After a simulated move, is the given side's king still attacked?
+   * For king moves we read the destination directly (step 4 above) instead of scanning
+   * the board — this guarantees a king that captured its adjacent checker is evaluated
+   * on the capture square only after that checker has been removed from the array.
+   */
+  isKingSafeAfterSimulatedMove(board, move, playerColor) {
+    const kingLoc =
+      move.piece.type === "k"
+        ? { row: move.to.row, col: move.to.col }
+        : this.findKing(board, playerColor);
+    if (!kingLoc) return false;
+    return !this.isSquareAttacked(board, kingLoc.row, kingLoc.col, OPPONENT[playerColor]);
+  },
+
+  /** Immutable apply — never mutates the incoming state or its board */
+  applyMove(state, move) {
+    const next = this.cloneState(state);
+    const board = next.board;
+    const { from, to, piece } = move;
+    const color = piece.color;
+
+    this.applyMoveToBoard(
+      board,
+      move,
+      state.chessMode,
+      state.castlingRooks || createInitialCastlingRooks()
+    );
+
+    if (move.castle && state.chessMode === "freestyle") {
+      next.castling[color].kingside = false;
+      next.castling[color].queenside = false;
+      next.enPassant = null;
+      return next;
     }
 
     if (piece.type === "k") {
@@ -684,10 +719,18 @@ const ChessEngine = {
       }
     }
 
-    // Make-move simulation on a cloned board: the captured piece is gone from this board,
-    // so its attacks no longer count when re-checking the moving side's king.
-    const simulated = this.applyMove(state, move);
-    return !this.isInCheck(simulated, playerColor);
+    // Clone the board so the live position is never touched. applyMoveToBoard enforces the
+    // capture-first order, then isKingSafeAfterSimulatedMove reads the king on its NEW square
+    // only after the captured checker has been removed — fixing false checkmates where a king
+    // captures an adjacent, unprotected checking piece (contact check).
+    const testBoard = this.cloneBoard(board);
+    this.applyMoveToBoard(
+      testBoard,
+      move,
+      state.chessMode,
+      state.castlingRooks || createInitialCastlingRooks()
+    );
+    return this.isKingSafeAfterSimulatedMove(testBoard, move, playerColor);
   },
 
   hasLegalMoves(state, color) {

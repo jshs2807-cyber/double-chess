@@ -39,6 +39,65 @@ function state(board, activePlayer, overrides = {}) {
     ...overrides,
   };
 }
+{
+  const board = emptyBoard();
+  board[7][4] = p("w", "k"); // e1
+  board[6][4] = p("b", "q"); // e2
+  board[0][4] = p("b", "k"); // e8
+  const s = state(board, "w", { chessMode: "standard" });
+
+  assert(ChessEngine.isInCheck(s, "w"), "king in contact check from queen");
+  const cap = ChessEngine.getLegalMovesForSquare(s, 7, 4).find(
+    (m) => m.to.row === 6 && m.to.col === 4
+  );
+  assert(cap, "king must capture adjacent checking queen");
+  assert(
+    ChessEngine.getGameResult(s, "w", "b").status === "ongoing",
+    "capturing the checker is not checkmate"
+  );
+  console.log("PASS: contact check — king captures adjacent unprotected queen");
+}
+
+// Contact check: horizontal adjacent rook.
+{
+  const board = emptyBoard();
+  board[7][4] = p("w", "k");
+  board[7][5] = p("b", "r");
+  board[0][0] = p("b", "k");
+  const s = state(board, "w");
+  assert(
+    ChessEngine.getLegalMovesForSquare(s, 7, 4).some((m) => m.to.row === 7 && m.to.col === 5),
+    "king captures adjacent rook"
+  );
+  assert(ChessEngine.getGameResult(s, "w", "b").status === "ongoing");
+  console.log("PASS: contact check — king captures adjacent rook");
+}
+
+// Contact check in double chess on Move 1 while in check.
+{
+  const board = emptyBoard();
+  board[7][7] = p("w", "k");
+  board[6][6] = p("b", "q");
+  board[0][0] = p("b", "k");
+  const s = state(board, "w", { chessMode: "double", movePhase: 1 });
+  assert(ChessEngine.getGameResult(s, "w", "b").status === "ongoing");
+  console.log("PASS: double chess contact check capture on Move 1");
+}
+
+// Discovered check after capture: queen unprotected but landing square still attacked -> checkmate.
+{
+  const board = emptyBoard();
+  board[7][4] = p("w", "k"); // e1
+  board[6][4] = p("b", "q"); // e2 checks
+  board[0][4] = p("b", "r"); // e8 rook still attacks e-file after capture
+  const s = state(board, "w");
+  const cap = ChessEngine.getLegalMovesForSquare(s, 7, 4).find(
+    (m) => m.to.row === 6 && m.to.col === 4
+  );
+  assert(!cap, "capturing queen on e2 still leaves king on attacked e2");
+  assert(ChessEngine.getGameResult(s, "w", "b").status === "checkmate");
+  console.log("PASS: capture illegal when landing square stays attacked (not a false mate bug)");
+}
 
 // Scenario: white king on a1 (7,0) is checked by an unprotected black pawn on b2 (6,1).
 // The pawn attacks a1 diagonally. The king's only escape is to capture the pawn.
