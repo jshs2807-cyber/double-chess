@@ -46,37 +46,37 @@ function startGame(timeControl) {
   console.log("PASS: four time controls defined correctly");
 }
 
-// Initial timers match the chosen base; clock frozen until first move.
+// Initial timers match the chosen base; clock is armed immediately at game start (edge case 1).
 {
   const s = startGame("rapid");
   assert(s.timers.w === 600 && s.timers.b === 600, "rapid starts at 600 each");
-  assert(s.timerStarted === false, "timer frozen before first move");
-  const frozen = GameLogic.tickTimer(s);
-  assert(frozen.timers.w === 600, "tick does nothing before first move");
-  console.log("PASS: initial timers + frozen-until-first-move");
+  assert(s.timerStarted === true, "clock armed immediately at game start");
+  const ticked = GameLogic.tickTimer(s);
+  assert(Math.abs(ticked.timers.w - 599.9) < 1e-9, "White clock ticks immediately at start");
+  assert(ticked.timers.b === 600, "Black clock untouched on White's turn");
+  console.log("PASS: White clock runs immediately on game start");
 }
 
-// Edge case 1: White's opening move arms the clock; afterwards the side-to-move ticks.
+// After moves the side-to-move always ticks.
 {
   let s = startGame("blitz"); // 180 + 0
   s = move(s, 6, 4, 4, 4); // 1.e4
-  assert(s.timerStarted === true, "clock armed after White's first move");
   assert(s.activePlayer === "b", "black to move");
   const ticked = GameLogic.tickTimer(s);
   assert(Math.abs(ticked.timers.b - 179.9) < 1e-9, "black clock ticks 0.1s");
   assert(ticked.timers.w === 180, "white clock untouched on black's turn");
-  console.log("PASS: clock arms on first move, active side ticks");
+  console.log("PASS: active side ticks after each move");
 }
 
 // Increment: Blitz 3|3 adds exactly +3 to the player who completed a turn (standard chess).
 {
   let s = startGame("blitz33");
-  s = move(s, 6, 4, 4, 4); // White 1.e4 — first turn, no increment (free opening), arms clock
-  assert(s.timers.w === 180, "no increment on White's free opening turn");
+  s = move(s, 6, 4, 4, 4); // White 1.e4 — completed turn -> +3
+  assert(s.timers.w === 183, "white gets +3 on its first completed turn");
   s = move(s, 1, 4, 3, 4); // Black 1...e5 — completed turn -> +3
   assert(s.timers.b === 183, "black gets +3 on completed turn");
-  s = move(s, 6, 3, 4, 3); // White 2.d4 — completed turn -> +3
-  assert(s.timers.w === 183, "white gets +3 on its second completed turn");
+  s = move(s, 6, 3, 4, 3); // White 2.d4 — completed turn -> +3 again
+  assert(s.timers.w === 186, "white gets +3 on its second completed turn");
   console.log("PASS: Blitz 3|3 increment applied once per completed turn");
 }
 
@@ -87,13 +87,13 @@ function startGame(timeControl) {
     chessMode: "double",
     timeControl: "blitz33",
   });
-  // White turn 1: Move 1 (e2-e4) then Move 2 (d2-d4) — free opening turn, no increment.
+  // White turn 1: Move 1 (e2-e4) then Move 2 (d2-d4) — +3 only at full-turn end.
   s = move(s, 6, 4, 4, 4);
   assert(s.movePhase === 2 && s.activePlayer === "w", "white still on Move 2");
   assert(s.timers.w === 180, "no increment mid-turn after Move 1");
   s = move(s, 6, 3, 4, 3);
   assert(s.activePlayer === "b", "turn passed to black after Move 2");
-  assert(s.timers.w === 180, "white free opening turn earns no increment");
+  assert(s.timers.w === 183, "white gets +3 exactly once for the full turn");
 
   // Black turn: Move 1 (e7-e5), Move 2 (d7-d5) -> +3 once at turn end.
   s = move(s, 1, 4, 3, 4);

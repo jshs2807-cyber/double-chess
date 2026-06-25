@@ -1093,6 +1093,9 @@ const GameLogic = {
       ...next,
       screen: "game",
       timerRunning: true,
+      // Edge case 1: White's clock runs the instant the game starts, regardless of
+      // whether the opening move has been played yet.
+      timerStarted: true,
       turnStartedInCheck: false,
     };
   },
@@ -1122,12 +1125,10 @@ const GameLogic = {
     const mover = state.activePlayer;
     const nextPlayer = OPPONENT[mover];
 
-    // Fischer increment + clock activation. completeTurn is the single funnel through which a
-    // turn ends and passes to the opponent — for standard/freestyle every move reaches it, and
-    // for Double Chess only the FULL turn does (Move 2, or Move 1 that gives check). So adding
-    // the increment to the mover here applies it exactly once per completed turn, never after
-    // Move 1. The increment is skipped on the very first completed turn because the clock only
-    // arms once White's opening move is done (timerStarted flips true here).
+    // Fischer increment. completeTurn is the single funnel through which a turn ends and passes
+    // to the opponent — for standard/freestyle every move reaches it, and for Double Chess only
+    // the FULL turn does (Move 2, or Move 1 that gives check). So adding the increment to the
+    // mover here applies it exactly once per completed turn, never after Move 1.
     let timers = state.timers;
     if (state.increment > 0 && state.timerStarted) {
       timers = {
@@ -1297,7 +1298,8 @@ const GameLogic = {
     if (!state.timerRunning || state.gameOver || state.screen !== "game") {
       return state;
     }
-    // Edge case 1: clocks stay frozen until White's opening move is complete.
+    // Safety guard: clocks only tick once a game has actually started (timerStarted is set
+    // true in startGame, so White's clock runs immediately — edge case 1).
     if (!state.timerStarted) return state;
 
     const key = state.activePlayer;
