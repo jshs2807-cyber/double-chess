@@ -40,9 +40,34 @@
       </div>
     </section>
 
-    <section id="screen-match" class="screen" data-screen="match" hidden>
+    <section id="screen-time" class="screen" data-screen="time" hidden>
       <header class="screen-header">
         <button type="button" class="btn btn--icon" data-action="back-mode" aria-label="Back">←</button>
+        <h2>Time control</h2>
+      </header>
+      <div class="screen-actions screen-actions--stack">
+        <button type="button" class="btn btn--card" data-action="select-time" data-time="bullet">
+          <span class="btn-card__title">Bullet</span>
+          <span class="btn-card__desc">1 minute · no increment</span>
+        </button>
+        <button type="button" class="btn btn--card" data-action="select-time" data-time="blitz">
+          <span class="btn-card__title">Blitz</span>
+          <span class="btn-card__desc">3 minutes · no increment</span>
+        </button>
+        <button type="button" class="btn btn--card btn--card--accent" data-action="select-time" data-time="blitz33">
+          <span class="btn-card__title">Blitz 3|3</span>
+          <span class="btn-card__desc">3 minutes · +3 seconds each completed turn</span>
+        </button>
+        <button type="button" class="btn btn--card" data-action="select-time" data-time="rapid">
+          <span class="btn-card__title">Rapid</span>
+          <span class="btn-card__desc">10 minutes · no increment</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="screen-match" class="screen" data-screen="match" hidden>
+      <header class="screen-header">
+        <button type="button" class="btn btn--icon" data-action="back-time" aria-label="Back">←</button>
         <h2>Match type</h2>
       </header>
       <div class="screen-actions screen-actions--stack">

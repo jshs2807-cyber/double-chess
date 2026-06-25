@@ -441,14 +441,19 @@ button:disabled {
   color: var(--text-muted);
 }
 
+/* Two-stage urgency: amber warning under 20s, red + pulse under 10s. */
 .player-timer--low {
+  color: #e0a82e !important;
+}
+
+.player-timer--critical {
   color: var(--danger) !important;
-  animation: pulse 1s ease infinite;
+  animation: pulse 0.6s ease infinite;
 }
 
 @keyframes pulse {
   50% {
-    opacity: 0.7;
+    opacity: 0.55;
   }
 }
 

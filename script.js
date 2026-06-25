@@ -6,6 +6,29 @@
 const TIMER_SECONDS = 5 * 60;
 const MATCHMAKING_DELAY_MS = 3000;
 
+/**
+ * Time controls (compatible with every chess mode).
+ *  base       — starting seconds per side
+ *  increment  — seconds added to a player's clock when that player's full turn completes
+ * In Double Chess a "turn" can be two moves; the increment is applied exactly once, when the
+ * turn passes to the opponent (handled in GameLogic.completeTurn), never after Move 1.
+ */
+const TIME_CONTROLS = {
+  bullet: { id: "bullet", label: "Bullet", sub: "1 min", base: 60, increment: 0 },
+  blitz: { id: "blitz", label: "Blitz", sub: "3 min", base: 180, increment: 0 },
+  blitz33: { id: "blitz33", label: "Blitz 3|3", sub: "3 min + 3 sec / turn", base: 180, increment: 3 },
+  rapid: { id: "rapid", label: "Rapid", sub: "10 min", base: 600, increment: 0 },
+};
+const DEFAULT_TIME_CONTROL = "blitz";
+
+/** Clock granularity: tick 10×/second so sub-10s tenths update smoothly. */
+const TICK_MS = 100;
+const TICK_SECONDS = TICK_MS / 1000;
+
+function getTimeControl(id) {
+  return TIME_CONTROLS[id] || TIME_CONTROLS[DEFAULT_TIME_CONTROL];
+}
+
 /** UI-only RhosGFX piece assets (CC0). Game logic still uses piece.type. */
 const PIECE_ASSET_TYPES = { k: "K", q: "Q", r: "R", b: "B", n: "N", p: "P" };
 
@@ -18,6 +41,7 @@ function getPieceAssetSrc(color, type) {
 const SCREENS = [
   "home",
   "mode",
+  "time",
   "match",
   "room-lobby",
   "room-join",
@@ -913,8 +937,14 @@ function createAppState() {
     movePhase: 1,
     turnStartedInCheck: false,
     boardFlipped: false,
-    timers: { w: TIMER_SECONDS, b: TIMER_SECONDS },
+    timeControl: DEFAULT_TIME_CONTROL,
+    increment: getTimeControl(DEFAULT_TIME_CONTROL).increment,
+    timers: {
+      w: getTimeControl(DEFAULT_TIME_CONTROL).base,
+      b: getTimeControl(DEFAULT_TIME_CONTROL).base,
+    },
     timerRunning: false,
+    timerStarted: false,
     gameOver: false,
     gameOverReason: null,
     winner: null,
@@ -954,6 +984,9 @@ function serializeGameForFirebase(state) {
     boardFlipped: state.boardFlipped,
     timers: { ...state.timers },
     timerRunning: state.timerRunning,
+    timerStarted: state.timerStarted,
+    timeControl: state.timeControl,
+    increment: state.increment,
     gameOver: state.gameOver,
     gameOverReason: state.gameOverReason,
     winner: state.winner,
@@ -979,6 +1012,9 @@ function mergeGameFromFirebase(state, game) {
     chessMode: game.chessMode ?? state.chessMode,
     timers: { ...game.timers },
     timerRunning: game.timerRunning,
+    timerStarted: game.timerStarted ?? state.timerStarted,
+    timeControl: game.timeControl ?? state.timeControl,
+    increment: game.increment ?? state.increment,
     gameOver: game.gameOver,
     gameOverReason: game.gameOverReason,
     winner: game.winner,
@@ -1003,7 +1039,20 @@ const GameLogic = {
   },
 
   setChessMode(state, mode) {
-    return { ...state, chessMode: mode, screen: "match" };
+    // Pick the chess variant, then choose a time control before the match type.
+    return { ...state, chessMode: mode, screen: "time" };
+  },
+
+  setTimeControl(state, timeControlId) {
+    const tc = getTimeControl(timeControlId);
+    return {
+      ...state,
+      timeControl: tc.id,
+      increment: tc.increment,
+      timers: { w: tc.base, b: tc.base },
+      timerStarted: false,
+      screen: "match",
+    };
   },
 
   setMatchType(state, matchType) {
@@ -1013,6 +1062,7 @@ const GameLogic = {
   resetForNewGame(state) {
     // Freestyle randomises the back rank here; standard/double keep the classic layout.
     const setup = createInitialSetup(state.chessMode);
+    const tc = getTimeControl(state.timeControl);
     return {
       ...state,
       board: setup.board,
@@ -1023,8 +1073,10 @@ const GameLogic = {
       movePhase: 1,
       turnStartedInCheck: false,
       boardFlipped: false,
-      timers: { w: TIMER_SECONDS, b: TIMER_SECONDS },
+      increment: tc.increment,
+      timers: { w: tc.base, b: tc.base },
       timerRunning: false,
+      timerStarted: false,
       gameOver: false,
       gameOverReason: null,
       winner: null,
@@ -1067,13 +1119,31 @@ const GameLogic = {
   },
 
   completeTurn(state, lastMove) {
-    const nextPlayer = OPPONENT[state.activePlayer];
+    const mover = state.activePlayer;
+    const nextPlayer = OPPONENT[mover];
+
+    // Fischer increment + clock activation. completeTurn is the single funnel through which a
+    // turn ends and passes to the opponent — for standard/freestyle every move reaches it, and
+    // for Double Chess only the FULL turn does (Move 2, or Move 1 that gives check). So adding
+    // the increment to the mover here applies it exactly once per completed turn, never after
+    // Move 1. The increment is skipped on the very first completed turn because the clock only
+    // arms once White's opening move is done (timerStarted flips true here).
+    let timers = state.timers;
+    if (state.increment > 0 && state.timerStarted) {
+      timers = {
+        ...timers,
+        [mover]: Math.round((timers[mover] + state.increment) * 10) / 10,
+      };
+    }
+
     // The target was already resolved by applyMove: a pawn that just advanced two squares
     // leaves a target for nextPlayer (their Move 1); anything else has already been cleared.
     const next = {
       ...state,
       activePlayer: nextPlayer,
       movePhase: 1,
+      timers,
+      timerStarted: true,
       enPassant: state.enPassant,
       boardFlipped: nextPlayer === "b",
       selectedSquare: null,
@@ -1227,12 +1297,15 @@ const GameLogic = {
     if (!state.timerRunning || state.gameOver || state.screen !== "game") {
       return state;
     }
+    // Edge case 1: clocks stay frozen until White's opening move is complete.
+    if (!state.timerStarted) return state;
 
     const key = state.activePlayer;
     const remaining = state.timers[key];
     if (remaining <= 0) return state;
 
-    const nextRemaining = remaining - 1;
+    // Decrement one tick (0.1s) and round to a tenth to keep clean float values.
+    const nextRemaining = Math.max(0, Math.round((remaining - TICK_SECONDS) * 10) / 10);
     const timers = { ...state.timers, [key]: nextRemaining };
 
     if (nextRemaining > 0) {
@@ -1304,8 +1377,14 @@ const UI = {
   },
 
   formatTime(seconds) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
+    const total = Math.max(0, seconds);
+    // Under 10 seconds: show tenths (e.g. "9.5") for last-second tension.
+    if (total < 10) {
+      return total.toFixed(1);
+    }
+    const whole = Math.ceil(total);
+    const m = Math.floor(whole / 60);
+    const s = whole % 60;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   },
 
@@ -1380,14 +1459,15 @@ const UI = {
     this.elements.timerWhite.textContent = this.formatTime(state.timers.w);
     this.elements.timerBlack.textContent = this.formatTime(state.timers.b);
 
-    this.elements.timerWhite.classList.toggle(
-      "player-timer--low",
-      state.activePlayer === "w" && state.timers.w <= 30 && state.timers.w > 0
-    );
-    this.elements.timerBlack.classList.toggle(
-      "player-timer--low",
-      state.activePlayer === "b" && state.timers.b <= 30 && state.timers.b > 0
-    );
+    const applyUrgency = (el, color) => {
+      const t = state.timers[color];
+      const active = state.activePlayer === color && !state.gameOver;
+      // Amber warning under 20s, red+pulse under 10s — only for the side whose clock runs.
+      el.classList.toggle("player-timer--low", active && t <= 20 && t > 10);
+      el.classList.toggle("player-timer--critical", active && t <= 10 && t > 0);
+    };
+    applyUrgency(this.elements.timerWhite, "w");
+    applyUrgency(this.elements.timerBlack, "b");
 
     this.elements.playerBars.forEach((bar) => {
       const player = bar.dataset.player;
@@ -1683,16 +1763,18 @@ const LocalMultiplayer = {
     throw new Error("Could not generate a unique room code.");
   },
 
-  buildInitialGamePayload(chessMode) {
+  buildInitialGamePayload(chessMode, timeControl) {
     const base = createAppState();
     base.chessMode = chessMode;
+    if (timeControl) base.timeControl = timeControl;
     return serializeGameForFirebase(GameLogic.startGame(base));
   },
 
-  async createRoom(chessMode) {
+  async createRoom(chessMode, timeControl) {
     const code = this.generateUniqueRoomCode();
     const room = {
       chessMode,
+      timeControl: timeControl || DEFAULT_TIME_CONTROL,
       status: "waiting",
       createdAt: Date.now(),
       host: { clientId: this.clientId, connected: true, color: "w" },
@@ -1719,7 +1801,7 @@ const LocalMultiplayer = {
       ...room,
       status: "playing",
       guest: { clientId: this.clientId, connected: true, color: "b" },
-      game: this.buildInitialGamePayload(room.chessMode),
+      game: this.buildInitialGamePayload(room.chessMode, room.timeControl),
       updatedAt: Date.now(),
       updatedBy: this.clientId,
     };
@@ -1858,11 +1940,12 @@ const FirebaseMultiplayer = {
     throw new Error("Could not generate a unique room code.");
   },
 
-  async createRoom(chessMode) {
+  async createRoom(chessMode, timeControl) {
     const code = await this.generateUniqueRoomCode();
     const ref = this.db.ref(this.roomPath(code));
     await ref.set({
       chessMode,
+      timeControl: timeControl || DEFAULT_TIME_CONTROL,
       status: "waiting",
       createdAt: firebase.database.ServerValue.TIMESTAMP,
       host: { clientId: this.clientId, connected: true, color: "w" },
@@ -1876,9 +1959,10 @@ const FirebaseMultiplayer = {
     return code;
   },
 
-  buildInitialGamePayload(chessMode) {
+  buildInitialGamePayload(chessMode, timeControl) {
     const base = createAppState();
     base.chessMode = chessMode;
+    if (timeControl) base.timeControl = timeControl;
     return serializeGameForFirebase(GameLogic.startGame(base));
   },
 
@@ -1892,7 +1976,7 @@ const FirebaseMultiplayer = {
     if (room.status !== "waiting" || room.guest?.clientId) {
       throw new Error("This room is full or already in progress.");
     }
-    const game = this.buildInitialGamePayload(room.chessMode);
+    const game = this.buildInitialGamePayload(room.chessMode, room.timeControl);
     await ref.update({
       status: "playing",
       guest: { clientId: this.clientId, connected: true, color: "b" },
@@ -1992,10 +2076,10 @@ const Multiplayer = {
     return true;
   },
 
-  async createRoom(chessMode) {
+  async createRoom(chessMode, timeControl) {
     const code = await (this.mode === "firebase"
-      ? FirebaseMultiplayer.createRoom(chessMode)
-      : LocalMultiplayer.createRoom(chessMode));
+      ? FirebaseMultiplayer.createRoom(chessMode, timeControl)
+      : LocalMultiplayer.createRoom(chessMode, timeControl));
     this.roomRole = this.mode === "firebase" ? FirebaseMultiplayer.roomRole : LocalMultiplayer.roomRole;
     return code;
   },
@@ -2158,6 +2242,7 @@ const App = {
     const base = GameLogic.startGame({
       ...createAppState(),
       chessMode: room.chessMode,
+      timeControl: room.timeControl || DEFAULT_TIME_CONTROL,
       matchType: "multiplayer",
       isOnline: true,
       roomCode: code,
@@ -2197,15 +2282,17 @@ const App = {
     const s = this.state;
     const mayRunTimer =
       s.timerRunning &&
+      s.timerStarted && // frozen until White's first move completes (edge case 1)
       s.screen === "game" &&
       !s.gameOver &&
       !s.opponentDisconnected &&
       (!s.isOnline || s.playerRole === s.activePlayer);
 
     if (mayRunTimer) {
+      // Ticks 10×/second; clearInterval above guarantees no duplicate/leaked timers.
       this.timerIntervalId = setInterval(() => {
         this.setState((prev) => GameLogic.tickTimer(prev));
-      }, 1000);
+      }, TICK_MS);
     }
   },
 
@@ -2234,6 +2321,12 @@ const App = {
           break;
         case "select-mode":
           this.setState((s) => GameLogic.setChessMode(s, target.dataset.mode));
+          break;
+        case "select-time":
+          this.setState((s) => GameLogic.setTimeControl(s, target.dataset.time));
+          break;
+        case "back-time":
+          this.setState((s) => GameLogic.navigate(s, "time"));
           break;
         case "select-match":
           this.handleMatchSelect(target.dataset.match);
@@ -2292,7 +2385,10 @@ const App = {
 
   async handleCreateRoom() {
     try {
-      const code = await Multiplayer.createRoom(this.state.chessMode);
+      const code = await Multiplayer.createRoom(
+        this.state.chessMode,
+        this.state.timeControl
+      );
       this.setState((s) => ({
         ...s,
         screen: "room-wait",
