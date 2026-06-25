@@ -1347,6 +1347,10 @@ const GameLogic = {
 const UI = {
   elements: {},
   pulseClearTimer: null,
+  dragSession: null,
+  DRAG_THRESHOLD_PX: 8,
+  dragSession: null,
+  DRAG_THRESHOLD_PX: 8,
 
   cacheElements() {
     this.elements = {
@@ -1445,6 +1449,276 @@ const UI = {
     if (!a && !b) return true;
     if (!a || !b || a.length !== b.length) return false;
     return a.every((m, i) => m.to.row === b[i].to.row && m.to.col === b[i].to.col);
+  },
+
+  /* ---------------------------------------------------------------- */
+  /* Pointer drag-and-drop (UI only — game rules via handleSquareClick) */
+  /* ---------------------------------------------------------------- */
+
+  setupDragAndDrop(app) {
+    const board = this.elements.board;
+    if (!board || board.dataset.dragBound === "1") return;
+    board.dataset.dragBound = "1";
+
+    board.addEventListener("pointerdown", (e) => this.onPointerDown(e, app));
+    board.addEventListener("pointermove", (e) => this.onPointerMove(e, app));
+    board.addEventListener("pointerup", (e) => this.onPointerUp(e, app));
+    board.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
+  },
+
+  onPointerDown(e, app) {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+
+    const square = e.target.closest(".square");
+    if (!square || square.classList.contains("square--disabled")) return;
+
+    const row = Number(square.dataset.row);
+    const col = Number(square.dataset.col);
+
+    e.preventDefault();
+
+    this.cancelDragSession();
+    this.dragSession = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      square: { row, col },
+      sourceSquareEl: square,
+      dragging: false,
+      ghost: null,
+      hoverSquareEl: null,
+    };
+
+    try {
+      this.elements.board.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  },
+
+  onPointerMove(e, app) {
+    const session = this.dragSession;
+    if (!session || e.pointerId !== session.pointerId) return;
+
+    const dx = e.clientX - session.startX;
+    const dy = e.clientY - session.startY;
+
+    if (!session.dragging) {
+      if (dx * dx + dy * dy < this.DRAG_THRESHOLD_PX * this.DRAG_THRESHOLD_PX) {
+        return;
+      }
+
+      const state = app.state;
+      if (!canPlayerAct(state)) {
+        this.cancelDragSession();
+        return;
+      }
+
+      const { row, col } = session.square;
+      const piece = state.board[row][col];
+      if (!piece || piece.color !== state.activePlayer) {
+        // Not a draggable piece — keep as tap; do not start drag.
+        return;
+      }
+
+      this.beginDrag(state, row, col);
+    }
+
+    if (session.dragging && session.ghost) {
+      this.updateDragGhost(e.clientX, e.clientY);
+      this.updateDragHover(e.clientX, e.clientY);
+    }
+  },
+
+  onPointerUp(e, app) {
+    const session = this.dragSession;
+    if (!session || e.pointerId !== session.pointerId) return;
+
+    try {
+      this.elements.board.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+
+    if (session.dragging) {
+      const targetSquare = this.getSquareAtPoint(e.clientX, e.clientY);
+      this.finishDrag(app, session, targetSquare);
+    } else {
+      // Short tap — preserve existing click-to-move behaviour.
+      const { row, col } = session.square;
+      app.setState((s) => GameLogic.handleSquareClick(s, row, col));
+    }
+
+    this.dragSession = null;
+  },
+
+  onPointerCancel() {
+    this.cancelDragSession();
+  },
+
+  beginDrag(state, row, col) {
+    const session = this.dragSession;
+    if (!session || session.dragging) return;
+
+    const squareEl =
+      session.sourceSquareEl ||
+      this.elements.board.querySelector(
+        `.square[data-row="${row}"][data-col="${col}"]`
+      );
+    const pieceEl = squareEl?.querySelector(".piece");
+    if (!pieceEl) return;
+
+    session.dragging = true;
+    session.from = { row, col };
+    session.ghost = this.createDragGhost(pieceEl, state.boardFlipped);
+    document.body.appendChild(session.ghost);
+
+    squareEl.classList.add("square--drag-source");
+    session.sourceSquareEl = squareEl;
+
+    this.updateDragGhost(session.startX, session.startY);
+  },
+
+  createDragGhost(pieceEl, boardFlipped) {
+    const rect = pieceEl.getBoundingClientRect();
+    const img = pieceEl.querySelector(".piece-img");
+    const ghost = document.createElement("div");
+    ghost.className = "piece-drag-ghost";
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+
+    if (img) {
+      const ghostImg = document.createElement("img");
+      ghostImg.className = "piece-img";
+      ghostImg.src = img.src;
+      ghostImg.alt = "";
+      ghostImg.setAttribute("aria-hidden", "true");
+      // Ghost is fixed to the viewport (outside the rotated frame) — always upright.
+      if (boardFlipped) {
+        ghostImg.style.transform = "rotate(180deg)";
+      }
+      ghost.appendChild(ghostImg);
+    }
+
+    return ghost;
+  },
+
+  updateDragGhost(clientX, clientY) {
+    const ghost = this.dragSession?.ghost;
+    if (!ghost) return;
+    ghost.style.left = `${clientX}px`;
+    ghost.style.top = `${clientY}px`;
+  },
+
+  updateDragHover(clientX, clientY) {
+    const session = this.dragSession;
+    if (!session) return;
+
+    const target = this.getSquareAtPoint(clientX, clientY);
+    if (session.hoverSquareEl === target) return;
+
+    if (session.hoverSquareEl) {
+      session.hoverSquareEl.classList.remove("square--drag-hover");
+    }
+    session.hoverSquareEl = target;
+    if (target) {
+      target.classList.add("square--drag-hover");
+    }
+  },
+
+  getSquareAtPoint(clientX, clientY) {
+    // Ghost uses pointer-events: none so elementFromPoint sees the square beneath.
+    const el = document.elementFromPoint(clientX, clientY);
+    return el ? el.closest(".square") : null;
+  },
+
+  isDropLegal(state, fromRow, fromCol, toRow, toCol) {
+    if (fromRow === toRow && fromCol === toCol) return false;
+
+    const selected = GameLogic.selectSquare(state, fromRow, fromCol);
+    if (!selected.selectedSquare) return false;
+
+    // Includes freestyle king→rook castling when that castle is in legalMoves.
+    return selected.legalMoves.some(
+      (m) => m.to.row === toRow && m.to.col === toCol
+    );
+  },
+
+  finishDrag(app, session, targetSquareEl) {
+    const from = session.from;
+    const ghost = session.ghost;
+    const sourceSquareEl = session.sourceSquareEl;
+
+    this.clearDragHover();
+
+    const cleanup = () => {
+      if (ghost?.parentNode) ghost.parentNode.removeChild(ghost);
+      sourceSquareEl?.classList.remove("square--drag-source");
+    };
+
+    if (!targetSquareEl || !from) {
+      this.snapGhostBack(ghost, sourceSquareEl, cleanup);
+      return;
+    }
+
+    const toRow = Number(targetSquareEl.dataset.row);
+    const toCol = Number(targetSquareEl.dataset.col);
+
+    const state = app.state;
+    const legal = this.isDropLegal(state, from.row, from.col, toRow, toCol);
+
+    if (!legal) {
+      this.snapGhostBack(ghost, sourceSquareEl, cleanup);
+      return;
+    }
+
+    cleanup();
+    app.setState((s) => {
+      let next = GameLogic.selectSquare(s, from.row, from.col);
+      return GameLogic.handleSquareClick(next, toRow, toCol);
+    });
+  },
+
+  snapGhostBack(ghost, sourceSquareEl, onDone) {
+    if (!ghost || !sourceSquareEl) {
+      onDone?.();
+      return;
+    }
+
+    const rect = sourceSquareEl.getBoundingClientRect();
+    ghost.classList.add("piece-drag-ghost--snap");
+    ghost.style.left = `${rect.left + rect.width / 2}px`;
+    ghost.style.top = `${rect.top + rect.height / 2}px`;
+
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      onDone?.();
+    };
+
+    ghost.addEventListener("transitionend", done, { once: true });
+    window.setTimeout(done, 280);
+  },
+
+  clearDragHover() {
+    const session = this.dragSession;
+    if (session?.hoverSquareEl) {
+      session.hoverSquareEl.classList.remove("square--drag-hover");
+      session.hoverSquareEl = null;
+    }
+  },
+
+  cancelDragSession() {
+    const session = this.dragSession;
+    if (!session) return;
+
+    this.clearDragHover();
+    if (session.ghost?.parentNode) {
+      session.ghost.parentNode.removeChild(session.ghost);
+    }
+    session.sourceSquareEl?.classList.remove("square--drag-source");
+    this.dragSession = null;
   },
 
   renderGame(state, prevState) {
@@ -1564,6 +1838,8 @@ const UI = {
   },
 
   renderBoard(state) {
+    this.cancelDragSession();
+
     const boardEl = this.elements.board;
     boardEl.innerHTML = "";
 
@@ -2127,6 +2403,7 @@ const App = {
     UI.cacheElements();
     this.multiplayerReady = Multiplayer.init();
     this.bindEvents();
+    UI.setupDragAndDrop(this);
     window.addEventListener("beforeunload", () => {
       if (this.state.isOnline) {
         Multiplayer.leaveRoom(this.state);
@@ -2351,13 +2628,7 @@ const App = {
       }
     });
 
-    UI.elements.board.addEventListener("click", (e) => {
-      const square = e.target.closest(".square");
-      if (!square) return;
-      const row = Number(square.dataset.row);
-      const col = Number(square.dataset.col);
-      this.setState((s) => GameLogic.handleSquareClick(s, row, col));
-    });
+    // Board input: pointer drag-and-drop + tap-to-move (no separate click listener).
   },
 
   async leaveSession() {

@@ -561,6 +561,7 @@ button:disabled {
   border-radius: 2px;
   overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  touch-action: none;
 }
 
 .square {
@@ -697,6 +698,39 @@ button:disabled {
   100% {
     transform: rotate(180deg) scale(1);
   }
+}
+
+/* Pointer drag ghost — fixed to viewport so board rotation never skews cursor tracking */
+.piece-drag-ghost {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  filter:
+    drop-shadow(0 3px 2px rgba(0, 0, 0, 0.28))
+    drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+  will-change: left, top;
+}
+
+.piece-drag-ghost--snap {
+  transition: left 0.22s ease, top 0.22s ease;
+}
+
+.piece-drag-ghost .piece-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.square--drag-source .piece {
+  opacity: 0.28;
+}
+
+.square--drag-hover {
+  box-shadow: inset 0 0 0 3px rgba(195, 170, 126, 0.85);
 }
 
 /* Overlay */
