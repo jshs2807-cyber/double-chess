@@ -1130,7 +1130,7 @@ const GameLogic = {
     // the FULL turn does (Move 2, or Move 1 that gives check). So adding the increment to the
     // mover here applies it exactly once per completed turn, never after Move 1.
     let timers = state.timers;
-    if (state.increment > 0 && state.timerStarted) {
+    if (state.increment > 0) {
       timers = {
         ...timers,
         [mover]: Math.round((timers[mover] + state.increment) * 10) / 10,
@@ -1298,9 +1298,6 @@ const GameLogic = {
     if (!state.timerRunning || state.gameOver || state.screen !== "game") {
       return state;
     }
-    // Safety guard: clocks only tick once a game has actually started (timerStarted is set
-    // true in startGame, so White's clock runs immediately — edge case 1).
-    if (!state.timerStarted) return state;
 
     const key = state.activePlayer;
     const remaining = state.timers[key];
@@ -1384,7 +1381,8 @@ const UI = {
     if (total < 10) {
       return total.toFixed(1);
     }
-    const whole = Math.ceil(total);
+    // Floor (not ceil) so the display counts down immediately — ceil made 179.9 show as 03:00.
+    const whole = Math.floor(total);
     const m = Math.floor(whole / 60);
     const s = whole % 60;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
@@ -2254,6 +2252,7 @@ const App = {
     let merged = mergeGameFromFirebase(base, room.game);
     merged.screen = "game";
     merged.timerRunning = true;
+    merged.timerStarted = true;
     Multiplayer.lastRemoteUpdatedAt = room.updatedAt || 0;
     this.setState(() => merged, { skipSync: playerRole !== "w" });
   },
@@ -2284,7 +2283,6 @@ const App = {
     const s = this.state;
     const mayRunTimer =
       s.timerRunning &&
-      s.timerStarted && // frozen until White's first move completes (edge case 1)
       s.screen === "game" &&
       !s.gameOver &&
       !s.opponentDisconnected &&
@@ -2370,12 +2368,15 @@ const App = {
   },
 
   handleMatchSelect(matchType) {
-    this.setState((s) => GameLogic.setMatchType(s, matchType));
-
     if (matchType === "solo") {
-      this.setState((s) => GameLogic.startGame(s));
+      // Single state update so the clock arms immediately (no intermediate screen).
+      this.setState((s) =>
+        GameLogic.startGame(GameLogic.setMatchType(s, matchType))
+      );
       return;
     }
+
+    this.setState((s) => GameLogic.setMatchType(s, matchType));
 
     if (!this.multiplayerReady) {
       alert("Multiplayer could not start. Please refresh the page.");
