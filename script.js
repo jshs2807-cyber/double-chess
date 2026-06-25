@@ -49,11 +49,17 @@ const ChessEngine = {
     };
   },
 
+  cloneCastlingRooks(rooks) {
+    if (!rooks) return createInitialCastlingRooks();
+    return { w: { ...rooks.w }, b: { ...rooks.b } };
+  },
+
   cloneState(state) {
     return {
       ...state,
       board: this.cloneBoard(state.board),
       castling: this.cloneCastling(state.castling),
+      castlingRooks: this.cloneCastlingRooks(state.castlingRooks),
       enPassant: state.enPassant ? { ...state.enPassant } : null,
       selectedSquare: state.selectedSquare ? { ...state.selectedSquare } : null,
       legalMoves: state.legalMoves ? state.legalMoves.map((m) => ({ ...m, to: { ...m.to } })) : [],
@@ -244,6 +250,77 @@ const ChessEngine = {
     // (next.enPassant is already a clone of state.enPassant via cloneState).
   },
 
+  /** Final castled positions are identical to standard chess for both variants. */
+  castleDestCols(side) {
+    return side === "K"
+      ? { kingDestCol: 6, rookDestCol: 5 } // king g-file, rook f-file
+      : { kingDestCol: 2, rookDestCol: 3 }; // king c-file, rook d-file
+  },
+
+  /**
+   * Freestyle (Chess960) castling validation — fully separate from canCastle so that the
+   * standard/double castling rules below are never touched. Start files are arbitrary but the
+   * destinations match standard chess (Kingside: K g1 / R f1, Queenside: K c1 / R d1).
+   */
+  isValidFreestyleCastling(state, color, side) {
+    if (state.chessMode !== "freestyle") return false;
+
+    const rights = state.castling[color];
+    if (side === "K" && !rights.kingside) return false;
+    if (side === "Q" && !rights.queenside) return false;
+
+    const rooks = state.castlingRooks && state.castlingRooks[color];
+    if (!rooks) return false;
+    const rookCol = side === "K" ? rooks.kingside : rooks.queenside;
+    if (rookCol === undefined || rookCol === null) return false;
+
+    const row = color === "w" ? 7 : 0;
+    const king = this.findKing(state.board, color);
+    if (!king || king.row !== row) return false;
+    const kingCol = king.col;
+
+    // The rook must still be sitting on its castling file.
+    const rookPiece = state.board[row][rookCol];
+    if (!rookPiece || rookPiece.type !== "r" || rookPiece.color !== color) return false;
+
+    // Cannot castle while in check.
+    if (this.isInCheck(state, color)) return false;
+
+    const { kingDestCol, rookDestCol } = this.castleDestCols(side);
+    const opponent = OPPONENT[color];
+
+    const range = (a, b) => {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const cols = [];
+      for (let c = lo; c <= hi; c += 1) cols.push(c);
+      return cols;
+    };
+
+    // (1) Every square the king and rook cross — including their destinations — must be empty,
+    //     except for the two castling pieces themselves (they don't block their own castling).
+    const span = new Set([
+      ...range(kingCol, kingDestCol),
+      ...range(rookCol, rookDestCol),
+    ]);
+    for (const c of span) {
+      if (c === kingCol || c === rookCol) continue;
+      if (state.board[row][c] !== null) return false;
+    }
+
+    // (2) The king's current square, each square it passes through, and its destination must
+    //     not be attacked. Lift the castling king & rook first so they can't falsely shield a
+    //     square from an enemy sliding piece (FIDE: the king is not its own blocker here).
+    const testBoard = this.cloneBoard(state.board);
+    testBoard[row][kingCol] = null;
+    testBoard[row][rookCol] = null;
+    for (const c of range(kingCol, kingDestCol)) {
+      if (this.isSquareAttacked(testBoard, row, c, opponent)) return false;
+    }
+
+    return true;
+  },
+
   canCastle(state, color, side) {
     const rights = state.castling[color];
     if (side === "K" && !rights.kingside) return false;
@@ -388,29 +465,53 @@ const ChessEngine = {
           push(tr, tc, { captured: target ? { ...target } : null });
         }
       }
-      if (this.canCastle(state, color, "K")) {
-        const row = color === "w" ? 7 : 0;
-        moves.push({
-          from: { row: fromRow, col: fromCol },
-          to: { row, col: 6 },
-          piece: { ...piece },
-          captured: null,
-          promotion: null,
-          castle: "K",
-          enPassant: false,
-        });
-      }
-      if (this.canCastle(state, color, "Q")) {
-        const row = color === "w" ? 7 : 0;
-        moves.push({
-          from: { row: fromRow, col: fromCol },
-          to: { row, col: 2 },
-          piece: { ...piece },
-          captured: null,
-          promotion: null,
-          castle: "Q",
-          enPassant: false,
-        });
+      if (state.chessMode === "freestyle") {
+        // Freestyle: the castling move's destination square IS the rook's square, so the
+        // "drop the king on your own rook" gesture maps straight to this move. Standard/double
+        // castling below is left exactly as it was.
+        const row = fromRow;
+        for (const side of ["K", "Q"]) {
+          if (this.isValidFreestyleCastling(state, color, side)) {
+            const rookCol =
+              side === "K"
+                ? state.castlingRooks[color].kingside
+                : state.castlingRooks[color].queenside;
+            moves.push({
+              from: { row: fromRow, col: fromCol },
+              to: { row, col: rookCol },
+              piece: { ...piece },
+              captured: null,
+              promotion: null,
+              castle: side,
+              enPassant: false,
+            });
+          }
+        }
+      } else {
+        if (this.canCastle(state, color, "K")) {
+          const row = color === "w" ? 7 : 0;
+          moves.push({
+            from: { row: fromRow, col: fromCol },
+            to: { row, col: 6 },
+            piece: { ...piece },
+            captured: null,
+            promotion: null,
+            castle: "K",
+            enPassant: false,
+          });
+        }
+        if (this.canCastle(state, color, "Q")) {
+          const row = color === "w" ? 7 : 0;
+          moves.push({
+            from: { row: fromRow, col: fromCol },
+            to: { row, col: 2 },
+            piece: { ...piece },
+            captured: null,
+            promotion: null,
+            castle: "Q",
+            enPassant: false,
+          });
+        }
       }
       return moves;
     }
@@ -453,6 +554,32 @@ const ChessEngine = {
     const { from, to, piece } = move;
     const color = piece.color;
 
+    // --- Freestyle (Chess960) castling: dedicated, overlap-safe placement. ---
+    // The king/rook start files are arbitrary and may already overlap the destination
+    // squares (e.g. king already on g1, or rook on the king's target). We therefore lift
+    // BOTH pieces first, then drop them onto their fixed destinations, which is correct for
+    // every layout including the "zero-square" cases. Standard/double never enter this branch.
+    if (move.castle && state.chessMode === "freestyle") {
+      const row = color === "w" ? 7 : 0;
+      const rookCol =
+        move.castle === "K"
+          ? state.castlingRooks[color].kingside
+          : state.castlingRooks[color].queenside;
+      const { kingDestCol, rookDestCol } = this.castleDestCols(move.castle);
+
+      const kingPiece = board[from.row][from.col];
+      const rookPiece = board[row][rookCol];
+      board[from.row][from.col] = null;
+      board[row][rookCol] = null;
+      board[row][kingDestCol] = kingPiece;
+      board[row][rookDestCol] = rookPiece;
+
+      next.castling[color].kingside = false;
+      next.castling[color].queenside = false;
+      next.enPassant = null; // castling never creates or preserves an en passant target
+      return next;
+    }
+
     board[to.row][to.col] = move.promotion
       ? { color, type: move.promotion }
       : { ...piece };
@@ -479,13 +606,31 @@ const ChessEngine = {
     }
     if (piece.type === "r") {
       const row = color === "w" ? 7 : 0;
-      if (from.row === row && from.col === 0) next.castling[color].queenside = false;
-      if (from.row === row && from.col === 7) next.castling[color].kingside = false;
+      if (next.chessMode === "freestyle") {
+        // Freestyle rooks sit on arbitrary files, so compare against the recorded files.
+        const rooks = state.castlingRooks && state.castlingRooks[color];
+        if (rooks && from.row === row) {
+          if (from.col === rooks.queenside) next.castling[color].queenside = false;
+          if (from.col === rooks.kingside) next.castling[color].kingside = false;
+        }
+      } else {
+        if (from.row === row && from.col === 0) next.castling[color].queenside = false;
+        if (from.row === row && from.col === 7) next.castling[color].kingside = false;
+      }
     }
     if (move.captured && move.captured.type === "r") {
-      const row = move.captured.color === "w" ? 7 : 0;
-      if (to.row === row && to.col === 0) next.castling[move.captured.color].queenside = false;
-      if (to.row === row && to.col === 7) next.castling[move.captured.color].kingside = false;
+      const capColor = move.captured.color;
+      const row = capColor === "w" ? 7 : 0;
+      if (next.chessMode === "freestyle") {
+        const rooks = state.castlingRooks && state.castlingRooks[capColor];
+        if (rooks && to.row === row) {
+          if (to.col === rooks.queenside) next.castling[capColor].queenside = false;
+          if (to.col === rooks.kingside) next.castling[capColor].kingside = false;
+        }
+      } else {
+        if (to.row === row && to.col === 0) next.castling[capColor].queenside = false;
+        if (to.row === row && to.col === 7) next.castling[capColor].kingside = false;
+      }
     }
 
     this.resolveEnPassantAfterMove(state, move, next);
@@ -521,7 +666,11 @@ const ChessEngine = {
     // normal king move/capture we rely solely on the simulated board below: applyMove removes
     // the captured piece, so a king that captures its checker is correctly seen as safe.
     if (piece.type === "k" && move.castle) {
-      if (
+      if (state.chessMode === "freestyle") {
+        // Freestyle's `to` is the rook square, so the generic straight-line path check does not
+        // apply; isValidFreestyleCastling already verified emptiness and king-path safety.
+        if (!this.isValidFreestyleCastling(state, playerColor, move.castle)) return false;
+      } else if (
         !this.isKingPathSafe(
           board,
           move.from.row,
@@ -616,8 +765,9 @@ const ChessEngine = {
 /* Initial state                                                       */
 /* ------------------------------------------------------------------ */
 
-function createInitialBoard() {
-  const backRank = ["r", "n", "b", "q", "k", "b", "n", "r"];
+const STANDARD_BACK_RANK = ["r", "n", "b", "q", "k", "b", "n", "r"];
+
+function buildBoardFromBackRank(backRank) {
   const board = [];
   for (let row = 0; row < 8; row += 1) {
     const rank = [];
@@ -633,10 +783,77 @@ function createInitialBoard() {
   return board;
 }
 
+function createInitialBoard() {
+  return buildBoardFromBackRank(STANDARD_BACK_RANK);
+}
+
 function createInitialCastling() {
   return {
     w: { kingside: true, queenside: true },
     b: { kingside: true, queenside: true },
+  };
+}
+
+/**
+ * Freestyle (Chess960) starting back rank — random but FIDE-legal:
+ *  - the two bishops sit on opposite-colour squares (even-file vs odd-file index),
+ *  - the king is always between the two rooks: the final three empty files are filled
+ *    left→right as rook, king, rook, which guarantees that ordering.
+ */
+function createFreestyleBackRank() {
+  const rank = new Array(8).fill(null);
+  const emptyFiles = () => {
+    const out = [];
+    for (let i = 0; i < 8; i += 1) if (rank[i] === null) out.push(i);
+    return out;
+  };
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  rank[pick([0, 2, 4, 6])] = "b"; // bishop on one square colour
+  rank[pick([1, 3, 5, 7])] = "b"; // bishop on the opposite square colour
+  rank[pick(emptyFiles())] = "q";
+  rank[pick(emptyFiles())] = "n";
+  rank[pick(emptyFiles())] = "n";
+  const rest = emptyFiles(); // exactly three files, ascending
+  rank[rest[0]] = "r";
+  rank[rest[1]] = "k";
+  rank[rest[2]] = "r";
+  return rank;
+}
+
+/** Map a back rank to the castling rook files (queenside rook left of king, kingside right). */
+function castlingRooksFromBackRank(backRank) {
+  const kingCol = backRank.indexOf("k");
+  const rookCols = [];
+  backRank.forEach((t, i) => {
+    if (t === "r") rookCols.push(i);
+  });
+  const queenside = rookCols.find((c) => c < kingCol);
+  const kingside = rookCols.find((c) => c > kingCol);
+  return {
+    w: { kingside, queenside },
+    b: { kingside, queenside },
+  };
+}
+
+/** Standard / Double Chess rook files: queenside a-file (0), kingside h-file (7). */
+function createInitialCastlingRooks() {
+  return { w: { kingside: 7, queenside: 0 }, b: { kingside: 7, queenside: 0 } };
+}
+
+/**
+ * Starting position for a mode. Freestyle randomises the back rank (Black mirrors White on
+ * the same files); every other mode keeps the classic layout, so standard/double are untouched.
+ */
+function createInitialSetup(mode) {
+  const backRank =
+    mode === "freestyle" ? createFreestyleBackRank() : STANDARD_BACK_RANK;
+  return {
+    board: buildBoardFromBackRank(backRank),
+    castlingRooks:
+      mode === "freestyle"
+        ? castlingRooksFromBackRank(backRank)
+        : createInitialCastlingRooks(),
   };
 }
 
@@ -647,6 +864,7 @@ function createAppState() {
     matchType: null,
     board: createInitialBoard(),
     castling: createInitialCastling(),
+    castlingRooks: createInitialCastlingRooks(),
     enPassant: null,
     activePlayer: "w",
     movePhase: 1,
@@ -685,6 +903,7 @@ function serializeGameForFirebase(state) {
   return {
     board: state.board,
     castling: state.castling,
+    castlingRooks: state.castlingRooks,
     enPassant: state.enPassant,
     activePlayer: state.activePlayer,
     movePhase: state.movePhase,
@@ -708,6 +927,7 @@ function mergeGameFromFirebase(state, game) {
     ...state,
     board: ChessEngine.cloneBoard(game.board),
     castling: ChessEngine.cloneCastling(game.castling),
+    castlingRooks: ChessEngine.cloneCastlingRooks(game.castlingRooks),
     enPassant: game.enPassant ? { ...game.enPassant } : null,
     activePlayer: game.activePlayer,
     movePhase: game.movePhase,
@@ -748,10 +968,13 @@ const GameLogic = {
   },
 
   resetForNewGame(state) {
+    // Freestyle randomises the back rank here; standard/double keep the classic layout.
+    const setup = createInitialSetup(state.chessMode);
     return {
       ...state,
-      board: createInitialBoard(),
+      board: setup.board,
       castling: createInitialCastling(),
+      castlingRooks: setup.castlingRooks,
       enPassant: null,
       activePlayer: "w",
       movePhase: 1,
@@ -833,13 +1056,13 @@ const GameLogic = {
 
     const opponent = OPPONENT[mover];
     const opponentInCheck = ChessEngine.isInCheck(next, opponent);
-    const isStandard = next.chessMode === "standard";
+    // Only Double Chess grants a second move; standard AND freestyle are single-move modes.
     const isDouble = next.chessMode === "double";
 
     const turnEndsNow =
-      isStandard ||
-      (isDouble && next.movePhase === 2) ||
-      (isDouble && next.movePhase === 1 && opponentInCheck);
+      !isDouble ||
+      next.movePhase === 2 ||
+      (next.movePhase === 1 && opponentInCheck);
 
     // Only judge checkmate/stalemate when the opponent is about to receive the turn
     if (turnEndsNow) {
@@ -889,6 +1112,29 @@ const GameLogic = {
     const selected = state.selectedSquare;
 
     if (selected) {
+      const selectedPiece = state.board[selected.row][selected.col];
+
+      // Freestyle castling gesture: a selected king dropped onto one of its own rooks.
+      // Because the freestyle castling move's destination IS the rook square, a legal castle
+      // already lives in legalMoves; this branch just makes the intent explicit and reselects
+      // the rook when the drop is not a legal castle. Standard/double are unaffected.
+      if (
+        state.chessMode === "freestyle" &&
+        selectedPiece &&
+        selectedPiece.type === "k" &&
+        piece &&
+        piece.type === "r" &&
+        piece.color === selectedPiece.color
+      ) {
+        const castleMove = state.legalMoves.find(
+          (m) => m.castle && m.to.row === row && m.to.col === col
+        );
+        if (castleMove) {
+          return this.tryMove(state, selected.row, selected.col, row, col);
+        }
+        return this.selectSquare(state, row, col);
+      }
+
       const isLegalDest = state.legalMoves.some(
         (m) => m.to.row === row && m.to.col === col
       );
@@ -1081,7 +1327,11 @@ const UI = {
 
   renderGame(state, prevState) {
     const modeLabel =
-      state.chessMode === "standard" ? "Standard Chess" : "Double Chess";
+      state.chessMode === "standard"
+        ? "Standard Chess"
+        : state.chessMode === "freestyle"
+        ? "Freestyle Chess"
+        : "Double Chess";
     this.elements.gameModeLabel.textContent = modeLabel;
 
     this.elements.timerWhite.textContent = this.formatTime(state.timers.w);
